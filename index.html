@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UFO 운석 피하기</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(to bottom, #001122, #003366);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+            color: white;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            position: relative;
+            background: linear-gradient(to bottom, #000033, #000066);
+            border: 3px solid #00ffff;
+            box-shadow: 0 0 20px #00ffff;
+        }
+        
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 20px;
+            color: #00ffff;
+            text-shadow: 2px 2px 4px #000;
+            z-index: 10;
+        }
+        
+        #instructions {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #00ffff;
+            text-shadow: 2px 2px 4px #000;
+            z-index: 10;
+        }
+        
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #ff4444;
+            text-shadow: 2px 2px 4px #000;
+            z-index: 10;
+            display: none;
+        }
+        
+        .blink {
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+        
+        @media (max-width: 600px) {
+            #gameContainer {
+                width: 95vw !important;
+                height: 70vh !important;
+            }
+            canvas {
+                width: 100% !important;
+                height: 100% !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui">
+            <div id="timer">시간: 0초</div>
+        </div>
+        <div id="instructions">
+            <h2>🛸 UFO 운석 피하기 🛸</h2>
+            <p>← → 키로 UFO를 조작하세요</p>
+            <p class="blink">스페이스바를 눌러 게임 시작!</p>
+        </div>
+        <div id="gameOver">
+            <h2>💥 GAME OVER 💥</h2>
+            <p id="finalTime">생존 시간: 0초</p>
+            <p class="blink">스페이스바를 눌러 재시작!</p>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const ui = document.getElementById('ui');
+        const instructions = document.getElementById('instructions');
+        const gameOverDiv = document.getElementById('gameOver');
+        const timerDiv = document.getElementById('timer');
+        const finalTimeDiv = document.getElementById('finalTime');
+
+        // 게임 상태
+        let gameState = 'waiting'; // 'waiting', 'playing', 'gameOver'
+        let gameStartTime = 0;
+        let survivalTime = 0;
+
+        // UFO 도트맵 (반원형)
+        const ufoPixelMap = [
+            [0,0,0,1,1,1,1,1,1,0,0,0],
+            [0,0,1,1,2,2,2,2,1,1,0,0],
+            [0,1,1,2,2,3,3,2,2,1,1,0],
+            [1,1,2,2,3,3,3,3,2,2,1,1],
+            [1,2,2,3,3,4,4,3,3,2,2,1],
+            [1,1,1,1,1,1,1,1,1,1,1,1]
+        ];
+
+        // UFO 색상
+        const ufoColors = {
+            0: 'transparent',
+            1: '#666666',
+            2: '#888888',
+            3: '#aaaaaa',
+            4: '#ffffff'
+        };
+
+        // 운석 도트맵
+        const meteorPixelMap = [
+            [0,0,1,1,1,0,0],
+            [0,1,2,2,2,1,0],
+            [1,2,3,2,2,2,1],
+            [1,2,2,2,3,2,1],
+            [0,1,2,2,2,1,0],
+            [0,0,1,1,1,0,0]
+        ];
+
+        // 운석 색상
+        const meteorColors = {
+            0: 'transparent',
+            1: '#440000',
+            2: '#880000',
+            3: '#ff4444'
+        };
+
+        // 게임 객체들
+        let ufo = {
+            x: canvas.width / 2 - 24,
+            y: canvas.height - 100,
+            width: 48,
+            height: 24,
+            speed: 5
+        };
+
+        let meteors = [];
+        let meteorSpeed = 2;
+        let meteorSpawnRate = 0.02;
+
+        // 별 배경
+        let stars = [];
+        for (let i = 0; i < 100; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2 + 1,
+                twinkle: Math.random() * Math.PI * 2
+            });
+        }
+
+        // 픽셀 그리기 함수
+        function drawPixelMap(pixelMap, colors, x, y, pixelSize = 4) {
+            for (let row = 0; row < pixelMap.length; row++) {
+                for (let col = 0; col < pixelMap[row].length; col++) {
+                    const colorIndex = pixelMap[row][col];
+                    if (colorIndex !== 0) {
+                        ctx.fillStyle = colors[colorIndex];
+                        ctx.fillRect(
+                            x + col * pixelSize,
+                            y + row * pixelSize,
+                            pixelSize,
+                            pixelSize
+                        );
+                    }
+                }
+            }
+        }
+
+        // 별 그리기
+        function drawStars() {
+            stars.forEach(star => {
+                star.twinkle += 0.05;
+                const alpha = 0.5 + 0.5 * Math.sin(star.twinkle);
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+                ctx.restore();
+            });
+        }
+
+        // UFO 그리기
+        function drawUFO() {
+            drawPixelMap(ufoPixelMap, ufoColors, ufo.x, ufo.y, 4);
+        }
+
+        // 운석 생성
+        function spawnMeteor() {
+            if (Math.random() < meteorSpawnRate) {
+                meteors.push({
+                    x: Math.random() * (canvas.width - 28),
+                    y: -24,
+                    width: 28,
+                    height: 24
+                });
+            }
+        }
+
+        // 운석 업데이트
+        function updateMeteors() {
+            meteors.forEach(meteor => {
+                meteor.y += meteorSpeed;
+            });
+            meteors = meteors.filter(meteor => meteor.y < canvas.height);
+        }
+
+        // 운석 그리기
+        function drawMeteors() {
+            meteors.forEach(meteor => {
+                drawPixelMap(meteorPixelMap, meteorColors, meteor.x, meteor.y, 4);
+            });
+        }
+
+        // 충돌 검사
+        function checkCollisions() {
+            for (let meteor of meteors) {
+                if (ufo.x < meteor.x + meteor.width &&
+                    ufo.x + ufo.width > meteor.x &&
+                    ufo.y < meteor.y + meteor.height &&
+                    ufo.y + ufo.height > meteor.y) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 게임 시작
+        function startGame() {
+            gameState = 'playing';
+            gameStartTime = Date.now();
+            meteors = [];
+            meteorSpeed = 2;
+            meteorSpawnRate = 0.02;
+            ufo.x = canvas.width / 2 - 24;
+            instructions.style.display = 'none';
+            gameOverDiv.style.display = 'none';
+            ui.style.display = 'block';
+        }
+
+        // 게임 오버
+        function gameOver() {
+            gameState = 'gameOver';
+            finalTimeDiv.textContent = `생존 시간: ${survivalTime}초`;
+            gameOverDiv.style.display = 'block';
+            ui.style.display = 'none';
+        }
+
+        // 게임 업데이트
+        function update() {
+            if (gameState === 'playing') {
+                // 생존 시간 업데이트
+                survivalTime = Math.floor((Date.now() - gameStartTime) / 1000);
+                timerDiv.textContent = `시간: ${survivalTime}초`;
+
+                // 난이도 증가
+                if (survivalTime > 0 && survivalTime % 10 === 0) {
+                    meteorSpeed = Math.min(2 + survivalTime * 0.1, 8);
+                    meteorSpawnRate = Math.min(0.02 + survivalTime * 0.001, 0.05);
+                }
+
+                spawnMeteor();
+                updateMeteors();
+
+                if (checkCollisions()) {
+                    gameOver();
+                }
+            }
+        }
+
+        // 게임 렌더링
+        function render() {
+            // 배경 클리어
+            ctx.fillStyle = 'linear-gradient(to bottom, #000033, #000066)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 별 그리기
+            drawStars();
+
+            if (gameState === 'playing') {
+                drawUFO();
+                drawMeteors();
+            } else if (gameState === 'waiting') {
+                // 대기 상태에서도 UFO 표시
+                drawUFO();
+            }
+        }
+
+        // 게임 루프
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 키보드 입력
+        let keys = {};
+        
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            
+            if (e.key === ' ') {
+                e.preventDefault();
+                if (gameState === 'waiting' || gameState === 'gameOver') {
+                    startGame();
+                }
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // UFO 움직임
+        function handleInput() {
+            if (gameState === 'playing') {
+                if (keys['ArrowLeft'] && ufo.x > 0) {
+                    ufo.x -= ufo.speed;
+                }
+                if (keys['ArrowRight'] && ufo.x < canvas.width - ufo.width) {
+                    ufo.x += ufo.speed;
+                }
+            }
+        }
+
+        // 터치 입력 (모바일)
+        let touchStartX = 0;
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchStartX = e.touches[0].clientX;
+            
+            if (gameState === 'waiting' || gameState === 'gameOver') {
+                startGame();
+            }
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (gameState === 'playing') {
+                const touchX = e.touches[0].clientX;
+                const canvasRect = canvas.getBoundingClientRect();
+                const relativeX = (touchX - canvasRect.left) / canvasRect.width * canvas.width;
+                
+                ufo.x = Math.max(0, Math.min(canvas.width - ufo.width, relativeX - ufo.width / 2));
+            }
+        });
+
+        // 게임 시작
+        function init() {
+            gameLoop();
+            
+            // 입력 처리 루프
+            setInterval(handleInput, 16);
+        }
+
+        init();
+    </script>
+</body>
+</html>
